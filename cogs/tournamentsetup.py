@@ -29,9 +29,8 @@ class TournamentSetup(commands.Cog, name="Tournament Setup"):
         return False
 
     # ------------------------------------------------------------------
-    # Helper: resolve a Discord member from a plain username string
-    # Checks exact username, global name, and display name (case-insensitive) in this order
-    # Returns the Member object or None
+    # Helper: resolve a Discord member by exact username (m.name)(case-insensitive) only.
+    # Returns the Member object or None.
     # ------------------------------------------------------------------
     async def _resolve_member(self, guild: discord.Guild, name: str) -> discord.Member | None:
         name_lower = name.lower()
@@ -39,6 +38,17 @@ class TournamentSetup(commands.Cog, name="Tournament Setup"):
         for m in results:
             if m.name.lower() == name_lower:
                 return m
+        return None
+
+    # ------------------------------------------------------------------
+    # Helper: find a member whose global_name or display_name matches
+    # (case-insensitive). Used as a fallback when exact username lookup
+    # fails — the caller warns the admin rather than auto-assigning.
+    # ------------------------------------------------------------------
+    async def _find_soft_match(self, guild: discord.Guild, name: str) -> discord.Member | None:
+        name_lower = name.lower()
+        results = await guild.query_members(name, limit=10)
+        for m in results:
             if m.global_name and m.global_name.lower() == name_lower:
                 return m
             if m.display_name.lower() == name_lower:
@@ -264,7 +274,16 @@ class TournamentSetup(commands.Cog, name="Tournament Setup"):
 
             member = await self._resolve_member(guild, username)
             if member is None:
-                await self._send(interaction, f"⚠️ User not found: `{username}` — skipping.")
+                soft = await self._find_soft_match(guild, username)
+                if soft is not None:
+                    await self._send(
+                        interaction,
+                        f"⚠️ No exact username match for `{username}`. "
+                        f"Possible match: {soft.mention} — role **not** assigned automatically. "
+                        "Please assign the role manually if this is the correct person.",
+                    )
+                else:
+                    await self._send(interaction, f"⚠️ User not found: `{username}` — skipping.")
                 not_found_count += 1
                 continue
 
@@ -308,10 +327,19 @@ class TournamentSetup(commands.Cog, name="Tournament Setup"):
         captain_username = usernames[0]
         captain_member = await self._resolve_member(guild, captain_username)
         if captain_member is None:
-            await self._send(
-                interaction,
-                f"⚠️ Captain user not found for team `{team_name}`: `{captain_username}`.",
-            )
+            soft = await self._find_soft_match(guild, captain_username)
+            if soft is not None:
+                await self._send(
+                    interaction,
+                    f"⚠️ No exact username match for captain `{captain_username}` (team `{team_name}`). "
+                    f"Possible match: {soft.mention} — captain role **not** assigned automatically. "
+                    "Please assign the role manually if this is the correct person.",
+                )
+            else:
+                await self._send(
+                    interaction,
+                    f"⚠️ Captain user not found for team `{team_name}`: `{captain_username}`.",
+                )
             return 0
 
         if captains_role in captain_member.roles:
